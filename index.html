@@ -1,9 +1,7 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>Bảng kết quả dập lửa</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
-/* Layout: một cột hẹp như phiếu thí nghiệm. Phiếu nhập ở trên, biểu đồ thanh ngang theo nhóm, rồi bảng xếp hạng. */
 :root {
   --bg: #f1f4f6;
   --surface: #ffffff;
@@ -135,7 +133,6 @@ tr.avg td { font-weight: 600; border-bottom: 0; }
         <span id="msg" role="status" aria-live="polite"></span>
       </div>
     </form>
-    <p class="note" id="note" hidden></p>
   </section>
 
   <section aria-labelledby="h-chart">
@@ -159,12 +156,20 @@ tr.avg td { font-weight: 600; border-bottom: 0; }
 <script>
 (function () {
   var N = 6;
+  var STORAGE_KEY = "dap_lua_runs_v1";
   var runs = {};
-  var db = null;
-  var canWrite = true;
   var $ = function (id) { return document.getElementById(id); };
   var fmt = function (v) { return v.toLocaleString("vi-VN", { minimumFractionDigits: 1, maximumFractionDigits: 1 }); };
   var isNum = function (v) { return typeof v === "number" && isFinite(v); };
+
+  try {
+    var saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) runs = JSON.parse(saved) || {};
+  } catch (e) {}
+
+  function saveLocal() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(runs)); } catch (e) {}
+  }
 
   var grp = $("grp");
   for (var i = 1; i <= N; i++) {
@@ -241,40 +246,32 @@ tr.avg td { font-weight: 600; border-bottom: 0; }
     tb.appendChild(av);
   }
 
-  function renderClear() { $("clear").hidden = !runs[+grp.value] || !canWrite; }
+  function renderClear() { $("clear").hidden = !runs[+grp.value]; }
 
-  var dirty = false;
   function fillForm() {
     var r = runs[+grp.value];
     $("t1").value = r && isNum(r.t1) ? String(r.t1).replace(".", ",") : "";
     $("t2").value = r && isNum(r.t2) ? String(r.t2).replace(".", ",") : "";
-    dirty = false; renderClear();
+    renderClear();
   }
   function renderAll() { renderChart(); renderTable(); renderClear(); }
 
   grp.addEventListener("change", function () { setMsg(""); fillForm(); });
-  $("t1").addEventListener("input", function () { dirty = true; });
-  $("t2").addEventListener("input", function () { dirty = true; });
 
-  function parse(s) { var v = parseFloat(String(s).trim().replace(",", ".")); return v; }
-
-  function lock(why) {
-    canWrite = false;
-    $("save").disabled = true; $("t1").disabled = true; $("t2").disabled = true; grp.disabled = true;
-    var n = $("note"); n.hidden = false; n.textContent = why; renderClear();
-  }
+  function parse(s) { return parseFloat(String(s).trim().replace(",", ".")); }
 
   $("f").addEventListener("submit", function (e) {
     e.preventDefault();
-    if (!db || !canWrite) return;
     var a = parse($("t1").value), b = parse($("t2").value);
-    if (!(a > 0 && a <= 3600) || !(b > 0 && b <= 3600)) { setMsg("Nhập t₁ và t₂ là số giây lớn hơn 0.", true); return; }
-    var g = +grp.value, btn = $("save");
-    btn.disabled = true; setMsg("Đang gửi…");
-    db.doc("runs/g" + g).set({ group: g, t1: Math.round(a * 10) / 10, t2: Math.round(b * 10) / 10, updatedAt: Date.now() })
-      .then(function () { setMsg("Đã ghi kết quả Nhóm " + g + "."); dirty = false; })
-      .catch(function (err) { setMsg(err && err.code === "invalid_argument" ? "Tài khoản này chỉ được xem. Nhờ giáo viên cấp quyền chỉnh sửa." : "Chưa gửi được, thử lại sau ít giây.", true); })
-      .then(function () { btn.disabled = !canWrite; });
+    if (!(a > 0 && a <= 3600) || !(b > 0 && b <= 3600)) {
+      setMsg("Nhập t₁ và t₂ là số giây lớn hơn 0.", true);
+      return;
+    }
+    var g = +grp.value;
+    runs[g] = { group: g, t1: Math.round(a * 10) / 10, t2: Math.round(b * 10) / 10, updatedAt: Date.now() };
+    saveLocal();
+    renderAll();
+    setMsg("Đã ghi kết quả Nhóm " + g + ".");
   });
 
   var armTimer = null;
@@ -285,37 +282,17 @@ tr.avg td { font-weight: 600; border-bottom: 0; }
       armTimer = setTimeout(disarm, 4000); return;
     }
     disarm();
-    if (!db) return;
     var g = +grp.value;
-    db.doc("runs/g" + g).delete().then(function () { setMsg("Đã xóa kết quả Nhóm " + g + "."); $("t1").value = ""; $("t2").value = ""; })
-      .catch(function () { setMsg("Chưa xóa được.", true); });
+    delete runs[g];
+    saveLocal();
+    renderAll();
+    $("t1").value = ""; $("t2").value = "";
+    setMsg("Đã xóa kết quả Nhóm " + g + ".");
   });
   function disarm() { clearTimeout(armTimer); var b = $("clear"); b.classList.remove("armed"); b.textContent = "Xóa kết quả nhóm này"; }
 
   renderAll();
-
-  function start() {
-    var cl = window.claude;
-    if (!cl || !cl.use) { lock("Trang này chưa kết nối được với kho dữ liệu chung. Hãy mở bằng liên kết được chia sẻ."); return; }
-    Promise.all([cl.use("db"), cl.use("user").catch(function () { return null; })]).then(function (res) {
-      db = res[0]; var user = res[1];
-      if (!db) { lock("Cần đăng nhập để nhập và xem kết quả chung của lớp."); return; }
-      Promise.resolve(user && user.can ? user.can("data.write") : null).then(function (ok) {
-        if (ok === false) lock("Tài khoản này chỉ được xem. Nhờ giáo viên cấp quyền chỉnh sửa để nhập kết quả.");
-      }).catch(function () {});
-      var slow = setTimeout(function () { var n = $("note"); if (n.hidden) { n.hidden = false; n.textContent = "Chưa tải được dữ liệu, số liệu hiển thị có thể chưa mới nhất."; } }, 10000);
-      var first = true;
-      db.collection("runs").onSnapshot(function (snap) {
-        if (!snap.metadata.fromCache) { clearTimeout(slow); if (canWrite) { var n = $("note"); n.hidden = true; } }
-        runs = {};
-        snap.docs.forEach(function (d) { var v = d.data(); if (v && isNum(v.group) && v.group >= 1 && v.group <= N) runs[v.group] = v; });
-        renderAll();
-        if (first || !dirty) { fillForm(); first = false; }
-      }, function () { clearTimeout(slow); var n = $("note"); n.hidden = false; n.textContent = "Mất kết nối với kho dữ liệu. Tải lại trang để thử lại."; });
-    });
-  }
-  start();
+  fillForm();
 })();
 </script>
-
 </body></html>
